@@ -1,0 +1,63 @@
+# config/pipeline_config.yaml
+# Central configuration consumed by PySpark jobs and scripts.
+
+pipeline:
+  name: nyc-taxi-lakehouse
+  version: "1.0.0"
+  taxi_type: yellow       # yellow | green | fhv
+
+data:
+  source_url: https://d37ci6vzurychx.cloudfront.net/trip-data
+  default_year: 2024
+  default_months: ["01", "02", "03"]
+  download_dir: /tmp/nyc_taxi_raw
+
+storage:
+  minio_endpoint: http://minio:9000
+  buckets:
+    landing: nyc-taxi-landing
+    bronze:  nyc-taxi-bronze
+    silver:  nyc-taxi-silver
+    gold:    nyc-taxi-gold
+    dbt:     nyc-taxi-dbt
+
+spark:
+  master:           spark://spark-master:7077
+  executor_memory:  2g
+  driver_memory:    2g
+  executor_cores:   2
+  num_executors:    1
+  delta_version:    3.2.0
+  hadoop_aws:       3.3.4
+  aws_sdk:          1.12.262
+
+bronze:
+  partition_by:    ["_year", "_month"]
+  merge_keys:      ["VendorID", "tpep_pickup_datetime", "_source_file"]
+  z_order_by:      ["tpep_pickup_datetime"]
+
+silver:
+  partition_by:    ["_year", "_month"]
+  merge_keys:      ["VendorID", "tpep_pickup_datetime", "_source_file"]
+  z_order_by:      ["tpep_pickup_datetime", "PULocationID"]
+  max_fare:        2000
+  max_distance:    500
+  max_passengers:  8
+
+gold:
+  tables:
+    - daily_revenue
+    - hourly_demand
+    - location_stats
+    - payment_breakdown
+  write_mode: overwrite
+
+vacuum:
+  retain_hours: 168     # 7 days
+
+airflow:
+  schedule:      "0 1 1 * *"   # monthly
+  catchup:       false
+  max_active_runs: 1
+  retries:       2
+  retry_delay_minutes: 5

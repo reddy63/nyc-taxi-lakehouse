@@ -1,0 +1,37 @@
+nyc_taxi_lakehouse:
+  target: dev
+  outputs:
+
+    # dev: DuckDB reads Gold Delta files directly (no Spark needed)
+    dev:
+      type: duckdb
+      path: /tmp/nyc_taxi_dbt.duckdb
+      extensions:
+        - httpfs
+        - delta
+      settings:
+        s3_endpoint:       'localhost:9000'
+        s3_access_key_id:  'minioadmin'
+        s3_secret_access_key: 'minioadmin'
+        s3_url_style:      'path'
+        s3_use_ssl:        false
+
+    # docker: same DuckDB engine as `dev`, but pointed at the MinIO container's
+    # in-network hostname instead of localhost - use this target when dbt runs
+    # INSIDE the docker-compose network (e.g. from the Airflow containers).
+    # NOTE: there's no Spark Thrift server in this stack, and the staging models use
+    # DuckDB's delta_scan() function which Spark SQL doesn't support - a genuine
+    # `prod` (Spark Thrift) target would need a thriftserver service added to
+    # docker-compose.yml AND the staging models rewritten in Spark SQL. Not done here.
+    docker:
+      type: duckdb
+      path: /tmp/nyc_taxi_dbt.duckdb
+      extensions:
+        - httpfs
+        - delta
+      settings:
+        s3_endpoint:       'minio:9000'
+        s3_access_key_id:  'minioadmin'
+        s3_secret_access_key: 'minioadmin'
+        s3_url_style:      'path'
+        s3_use_ssl:        false

@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+*.egg-info/
+
+# Secrets
+.env
+!.env.example
+
+# Data
+/tmp/nyc_taxi_raw/
+logs/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/.user.yml
+
+# Docker
+*.override.yml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Jupyter (if notebooks added later)
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
