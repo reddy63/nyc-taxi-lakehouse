@@ -1,49 +1,46 @@
 #!/usr/bin/env bash
 # databricks/scripts/configure_auth.sh
-# Writes ~/.databrickscfg with your workspace credentials.
-# Run this ONCE after you have your Personal Access Token from Databricks UI.
 #
-# How to get your token:
-#   Databricks UI -> top-right avatar -> Settings -> Developer -> Access tokens
-#   -> Generate new token -> copy the string
+# Authenticates the Databricks CLI using OAuth U2M (browser-based).
+# This is the method Databricks now recommends for CLI usage.
+# No Personal Access Token (PAT) needed.
+#
+# What happens:
+#   1. The CLI opens a browser tab on your laptop.
+#   2. You log in with your Microsoft / Azure AD account
+#      (the same one you used to create the workspace).
+#   3. The CLI stores an OAuth refresh token in ~/.databrickscfg
+#      automatically. You never see or copy a token string.
+#
+# Prerequisites:
+#   - Databricks CLI v1.x installed  (run install_databricks_cli.sh first)
+#   - A browser available on this machine
 #
 # Usage:
-#   export DATABRICKS_TOKEN=dapi...
 #   bash databricks/scripts/configure_auth.sh
 
 set -euo pipefail
 
 WORKSPACE_HOST="https://adb-7405606284470994.14.azuredatabricks.net"
-TOKEN="${DATABRICKS_TOKEN:-}"
-
-if [[ -z "${TOKEN}" ]]; then
-    echo "ERROR: Set DATABRICKS_TOKEN before running this script."
-    echo "  export DATABRICKS_TOKEN=dapi..."
-    exit 1
-fi
-
-CFG_FILE="$HOME/.databrickscfg"
-
-# Write/replace the [DEFAULT] profile
-python3 - << PYEOF
-import configparser, os
-path = os.path.expanduser('~/.databrickscfg')
-cfg  = configparser.ConfigParser()
-if os.path.exists(path):
-    cfg.read(path)
-if 'DEFAULT' not in cfg:
-    cfg['DEFAULT'] = {}
-cfg['DEFAULT']['host']  = '${WORKSPACE_HOST}'
-cfg['DEFAULT']['token'] = '${TOKEN}'
-with open(path, 'w') as f:
-    cfg.write(f)
-print(f'Written: {path}')
-PYEOF
 
 echo ""
-echo "Workspace : ${WORKSPACE_HOST}"
-echo "Token     : ${TOKEN:0:8}...(redacted)"
+echo "=================================================="
+echo "  Databricks CLI — OAuth U2M authentication"
+echo "  Workspace: ${WORKSPACE_HOST}"
+echo "=================================================="
 echo ""
-echo "Test with:  databricks workspace list /"
-echo "           (new CLI)  or"
-echo "           databricks fs ls  (legacy CLI)"
+echo "A browser tab will open. Sign in with your Microsoft"
+echo "account (arunreddyrikkala436@gmail.com)."
+echo ""
+
+databricks auth login \
+    --host "${WORKSPACE_HOST}" \
+    --profile DEFAULT
+
+echo ""
+echo "Authentication complete."
+echo ""
+echo "Verifying connection..."
+databricks workspace list / --profile DEFAULT
+echo ""
+echo "Ready. You can now run:  bash databricks/scripts/deploy.sh dev"

@@ -1,25 +1,26 @@
 """
 databricks/spark/bronze/ingest_bronze.py
 
-BRONZE ingestion — Databricks Runtime edition.
+BRONZE ingestion - Databricks Runtime + Azure ADLS Gen2 edition.
 
 Changes vs local spark/bronze/ingest_bronze.py
-  1. get_spark()         →  Databricks shim (returns cluster session)
-  2. s3a://              →  s3://  (DBIO native; IAM creds from instance profile)
-  3. spark.stop()        →  REMOVED  (cluster manages lifecycle)
-  4. optimize_delta()    →  spark.sql(OPTIMIZE ...) via Unity Catalog table name,
-                             not a raw path (respects UC governance)
-  5. upsert_delta()      →  target_path is still an S3 path; Unity Catalog
-                             external table registration is done once in setup,
-                             not on every run.
+  1. get_spark()         ->  Databricks shim (returns cluster session)
+  2. s3a://               ->  abfss://container@account.dfs.core.windows.net/
+     (this workspace is Azure Databricks - see databricks.yml's adb-...
+     azuredatabricks.net host and .env.databricks's ADLS_STORAGE_ACCOUNT -
+     not AWS, so this is abfss://, not s3:///s3a://)
+  3. spark.stop()        ->  REMOVED  (cluster manages lifecycle)
+  4. optimize_delta()    ->  tries OPTIMIZE via the Unity Catalog table name
+     first (nyc_taxi.bronze.yellow_trips, registered once by
+     resources/setup_unity_catalog.sql), falls back to path-based OPTIMIZE
+     if that external table hasn't been registered yet.
 
-Everything else — add_bronze_metadata(), build_landing_paths(), the MERGE
-logic inside delta_utils.upsert_delta() — is identical.
+Everything else - add_bronze_metadata(), build_landing_paths(), the MERGE
+logic inside delta_utils.upsert_delta() - is identical to the local version.
 
 Run on Databricks:
-  Configured as a Python task in the Asset Bundle job definition.
-  Parameters passed via Databricks Widgets or job task parameters:
-    --year  2024  --months  01,02,03
+  Configured as a spark_python_task in resources/nyc_taxi_pipeline.yml.
+  Parameters passed as job task parameters: --year 2024 --months 01,02,03
 """
 from __future__ import annotations
 import argparse
@@ -31,36 +32,44 @@ from datetime import datetime, timezone
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType
 
-# DATABRICKS: import from databricks/ subtree so the shim spark_session is used
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+import inspect
+try:
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _script_dir = os.path.dirname(os.path.abspath(inspect.getsourcefile(lambda:0)))
+
+sys.path.insert(0, os.path.abspath(os.path.join(_script_dir, "../..")))
 from spark.utils.spark_session import get_spark
 from spark.utils.delta_utils import upsert_delta, optimize_delta
 
-# ── constants ────────────────────────────────────────────────────────────────
-# DATABRICKS: s3:// (DBIO) instead of s3a:// (Hadoop S3A)
-LANDING_BUCKET = os.getenv("LANDING_BUCKET", "nyc-taxi-landing")
-BRONZE_BUCKET  = os.getenv("BRONZE_BUCKET",  "nyc-taxi-bronze")
-TAXI_TYPE      = os.getenv("TAXI_TYPE",       "yellow")
+# -- ADLS Gen2 path builder (matches transform_silver.py's adls() helper) --
+STORAGE_ACCOUNT   = os.getenv("ADLS_STORAGE_ACCOUNT", "nyctaxilakehouse1")
+LANDING_CONTAINER = os.getenv("LANDING_CONTAINER", "landing")
+BRONZE_CONTAINER  = os.getenv("BRONZE_CONTAINER",  "bronze")
+TAXI_TYPE         = os.getenv("TAXI_TYPE", "yellow")
 
-# DATABRICKS: Unity Catalog identifiers for OPTIMIZE (requires UC metastore)
 UC_CATALOG = os.getenv("UC_CATALOG", "nyc_taxi")
 UC_SCHEMA  = os.getenv("UC_BRONZE_SCHEMA", "bronze")
 
 
+def adls(container: str, path: str = "") -> str:
+    """Build an abfss:// URI for Azure Data Lake Storage Gen2."""
+    return f"abfss://{container}@{STORAGE_ACCOUNT}.dfs.core.windows.net/{path}"
+
+
 def build_landing_paths(taxi_type: str, year: int, months: list[str]) -> list[str]:
-    # DATABRICKS: s3:// not s3a://
     return [
-        f"s3://{LANDING_BUCKET}/{taxi_type}/{year}/{m}/"
+        adls(LANDING_CONTAINER, f"{taxi_type}/{year}/{m}/")
         for m in months
     ]
 
 
 def add_bronze_metadata(df, source_glob: str, batch_id: str):
-    """Identical to local version — no Databricks-specific changes."""
+    """Identical to local version - no Databricks-specific changes."""
     return (
         df
         .withColumn("_ingested_at",  F.lit(datetime.now(timezone.utc).isoformat()))
-        .withColumn("_source_file",  F.input_file_name())
+        .withColumn("_source_file",  F.col("_metadata.file_path"))
         .withColumn("_batch_id",     F.lit(batch_id))
         .withColumn("_taxi_type",    F.lit(TAXI_TYPE))
         .withColumn("_year",  F.year("tpep_pickup_datetime").cast(StringType()))
@@ -74,14 +83,17 @@ def run(year: int, months: list[str]) -> None:
     paths     = build_landing_paths(TAXI_TYPE, year, months)
 
     print(f"[BRONZE] Batch {batch_id} | taxi={TAXI_TYPE} | year={year} | months={months}")
+    print(f"[BRONZE] Reading from: {paths}")
 
     raw_df    = spark.read.parquet(*paths)
     print(f"[BRONZE] Raw row count : {raw_df.count():,}")
 
     bronze_df = add_bronze_metadata(raw_df, str(paths), batch_id)
+    
+    # Drop duplicates on the merge keys to prevent Delta Merge multiple match errors
+    bronze_df = bronze_df.dropDuplicates(["VendorID", "tpep_pickup_datetime", "_source_file"])
 
-    # DATABRICKS: s3:// target path
-    target_path = f"s3://{BRONZE_BUCKET}/{TAXI_TYPE}/"
+    target_path = adls(BRONZE_CONTAINER, f"{TAXI_TYPE}/")
 
     upsert_delta(
         spark,
@@ -91,9 +103,11 @@ def run(year: int, months: list[str]) -> None:
     )
     print(f"[BRONZE] Written to : {target_path}")
 
-    # DATABRICKS: OPTIMIZE via Unity Catalog table name (preferred over raw path)
-    # The external table nyc_taxi.bronze.yellow_trips must be registered once
-    # in setup (see resources/setup_unity_catalog.sql).
+    # OPTIMIZE via Unity Catalog table name (preferred - respects UC governance
+    # and is what makes this show up correctly in Catalog Explorer). The external
+    # table nyc_taxi.bronze.yellow_trips is registered once by
+    # resources/setup_unity_catalog.sql; fall back to path-based OPTIMIZE if
+    # that hasn't been run yet.
     try:
         spark.sql(
             f"OPTIMIZE {UC_CATALOG}.{UC_SCHEMA}.{TAXI_TYPE}_trips "
@@ -101,15 +115,14 @@ def run(year: int, months: list[str]) -> None:
         )
         print("[BRONZE] OPTIMIZE complete (Unity Catalog).")
     except Exception as e:
-        # Fallback: OPTIMIZE by path (works without UC registration)
         optimize_delta(spark, target_path, z_order_cols=["tpep_pickup_datetime"])
         print(f"[BRONZE] OPTIMIZE complete (path fallback): {e}")
 
-    # DATABRICKS: spark.stop() deliberately removed — cluster owns the session
+    # spark.stop() deliberately removed - cluster owns the session
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="NYC Taxi — Bronze (Databricks)")
+    parser = argparse.ArgumentParser(description="NYC Taxi - Bronze (Databricks)")
     parser.add_argument("--year",   type=int, required=True)
     parser.add_argument("--months", type=str, required=True)
     args   = parser.parse_args()

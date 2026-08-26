@@ -1,3 +1,6 @@
+resources:
+  jobs:
+    nyc_taxi_medallion_pipeline:
 # databricks/resources/nyc_taxi_pipeline.yml
 #
 # Databricks Workflow definition — replaces the Airflow DAG.
@@ -21,155 +24,105 @@
 # Compute: Databricks Serverless (no cluster provisioning needed —
 #          matches the workspace type shown in Azure portal).
 
-name: nyc_taxi_medallion_pipeline
-description: "NYC Taxi: Landing → Bronze → Silver → Gold → dbt Marts (Databricks)"
+      name: nyc_taxi_medallion_pipeline
+      description: "NYC Taxi: Landing → Bronze → Silver → Gold → dbt Marts (Databricks)"
 
 # Monthly schedule — same cadence as the Airflow DAG
-trigger:
-  periodic:
-    interval: 1
-    unit: MONTHS
+      trigger:
+        periodic:
+          interval: 4
+          unit: WEEKS
 
-email_notifications:
-  on_failure:
-    - arunreddyrikkala436@gmail.com
+      email_notifications:
+        on_failure:
+          - arunreddyrikkala436@gmail.com
 
 # Shared environment variables available to all Python tasks
-environment_key: &shared_env
-  environment_key: nyc_taxi_env
-  spec:
-    client: "1"
-    dependencies:
-      - delta-spark==3.2.0
-      - boto3==1.34.0
-      - pyyaml==6.0.1
+      environments:
+        - environment_key: nyc_taxi_env
+          spec:
+            client: "1"
+            dependencies:
+              - boto3==1.34.0
+              - pyyaml==6.0.1
+              - azure-storage-blob==12.19.0
+              - requests==2.31.0
+              - dbt-core==1.7.0
+              - dbt-databricks==1.7.0
 
-tasks:
+      tasks:
 
-  # ────────────────────────────────────────────────────────────────
-  - task_key: download_and_upload
-    description: Download TLC Parquet from public URL + upload to ADLS landing container
-    # Serverless compute — no cluster spec required
-    python_wheel_task:
-      package_name: nyc_taxi_lakehouse
-      entry_point:  download_and_upload
-      parameters:
-        - "--year"
-        - "${var.year}"
-        - "--months"
-        - "${var.months}"
-    environment_key: nyc_taxi_env
-    libraries:
-      - pypi:
-          package: azure-storage-blob==12.19.0
-      - pypi:
-          package: requests==2.31.0
+        # ────────────────────────────────────────────────────────────────
+        - task_key: bronze_ingestion
+          description: Ingest raw parquet from landing into Bronze delta table
+          spark_python_task:
+            python_file: ../spark/bronze/ingest_bronze.py
+            parameters:
+              - "--year"
+              - "${var.year}"
+              - "--months"
+              - "${var.months}"
+          environment_key: nyc_taxi_env
+        # ────────────────────────────────────────────────────────────────
+        - task_key: silver_transform
+          description: "Bronze Delta -> Silver Delta (clean + enrich + dedup)"
+          depends_on:
+            - task_key: bronze_ingestion
+          spark_python_task:
+            python_file: ../spark/silver/transform_silver.py
+            parameters:
+              - "--year"
+              - "${var.year}"
+              - "--months"
+              - "${var.months}"
+          environment_key: nyc_taxi_env
+        # ────────────────────────────────────────────────────────────────
+        - task_key: gold_aggregation
+          description: "Silver Delta -> Gold Delta (4 business tables + UC registration)"
+          depends_on:
+            - task_key: silver_transform
+          spark_python_task:
+            python_file: ../spark/gold/aggregate_gold.py
+            parameters:
+              - "--year"
+              - "${var.year}"
+              - "--months"
+              - "${var.months}"
+          environment_key: nyc_taxi_env
+        # ────────────────────────────────────────────────────────────────
+        - task_key: dbt_run
+          description: dbt run — build fct_monthly_revenue, fct_peak_hours, dim_payment_types
+          depends_on:
+            - task_key: gold_aggregation
+          dbt_task:
+            project_directory: ../dbt
+            commands:
+              - dbt deps
+              - dbt run
+            warehouse_id: "${var.sql_warehouse_id}"
+            catalog:       "${var.uc_catalog}"
+            schema:        marts
+          environment_key: nyc_taxi_env
 
-  # ────────────────────────────────────────────────────────────────
-  - task_key: bronze_ingestion
-    description: "Raw Parquet -> Bronze Delta Lake (MERGE + OPTIMIZE)"
-    depends_on:
-      - task_key: download_and_upload
-    spark_python_task:
-      python_file: databricks/spark/bronze/ingest_bronze.py
-      parameters:
-        - "--year"
-        - "${var.year}"
-        - "--months"
-        - "${var.months}"
-    environment_key: nyc_taxi_env
-    new_cluster:
-      spark_version: 15.4.x-scala2.12
-      num_workers: 1
-      node_type_id: Standard_DS3_v2
-      spark_env_vars:
-        ADLS_STORAGE_ACCOUNT: "${var.storage_account}"
-        TAXI_TYPE:             "${var.taxi_type}"
-        UC_CATALOG:            "${var.uc_catalog}"
+        # ────────────────────────────────────────────────────────────────
+        - task_key: dbt_test
+          description: dbt test — validate mart tables with schema tests
+          depends_on:
+            - task_key: dbt_run
+          dbt_task:
+            project_directory: ../dbt
+            commands:
+              - dbt test
+            warehouse_id: "${var.sql_warehouse_id}"
+            catalog:       "${var.uc_catalog}"
+            schema:        marts
+          environment_key: nyc_taxi_env
 
-  # ────────────────────────────────────────────────────────────────
-  - task_key: silver_transform
-    description: "Bronze Delta -> Silver Delta (clean + enrich + dedup)"
-    depends_on:
-      - task_key: bronze_ingestion
-    spark_python_task:
-      python_file: databricks/spark/silver/transform_silver.py
-      parameters:
-        - "--year"
-        - "${var.year}"
-        - "--months"
-        - "${var.months}"
-    environment_key: nyc_taxi_env
-    new_cluster:
-      spark_version: 15.4.x-scala2.12
-      num_workers: 2
-      node_type_id: Standard_DS3_v2
-      spark_env_vars:
-        ADLS_STORAGE_ACCOUNT: "${var.storage_account}"
-        TAXI_TYPE:             "${var.taxi_type}"
-        UC_CATALOG:            "${var.uc_catalog}"
-
-  # ────────────────────────────────────────────────────────────────
-  - task_key: gold_aggregation
-    description: "Silver Delta -> Gold Delta (4 business tables + UC registration)"
-    depends_on:
-      - task_key: silver_transform
-    spark_python_task:
-      python_file: databricks/spark/gold/aggregate_gold.py
-      parameters:
-        - "--year"
-        - "${var.year}"
-        - "--months"
-        - "${var.months}"
-    environment_key: nyc_taxi_env
-    new_cluster:
-      spark_version: 15.4.x-scala2.12
-      num_workers: 2
-      node_type_id: Standard_DS3_v2
-      spark_env_vars:
-        ADLS_STORAGE_ACCOUNT: "${var.storage_account}"
-        TAXI_TYPE:             "${var.taxi_type}"
-        UC_CATALOG:            "${var.uc_catalog}"
-
-  # ────────────────────────────────────────────────────────────────
-  - task_key: dbt_run
-    description: dbt run — build fct_monthly_revenue, fct_peak_hours, dim_payment_types
-    depends_on:
-      - task_key: gold_aggregation
-    dbt_task:
-      project_directory: databricks/dbt
-      commands:
-        - dbt deps
-        - dbt run --target prod --profiles-dir .
-      warehouse_id: "${var.sql_warehouse_id}"
-      catalog:       "${var.uc_catalog}"
-      schema:        marts
-
-  # ────────────────────────────────────────────────────────────────
-  - task_key: dbt_test
-    description: dbt test — validate mart tables with schema tests
-    depends_on:
-      - task_key: dbt_run
-    dbt_task:
-      project_directory: databricks/dbt
-      commands:
-        - dbt test --target prod --profiles-dir .
-      warehouse_id: "${var.sql_warehouse_id}"
-      catalog:       "${var.uc_catalog}"
-      schema:        marts
-
-  # ────────────────────────────────────────────────────────────────
-  - task_key: delta_vacuum
-    description: Vacuum all Delta tables (7-day retention)
-    depends_on:
-      - task_key: dbt_test
-    spark_python_task:
-      python_file: databricks/spark/utils/vacuum_all.py
-    environment_key: nyc_taxi_env
-    new_cluster:
-      spark_version: 15.4.x-scala2.12
-      num_workers: 1
-      node_type_id: Standard_DS3_v2
-      spark_env_vars:
-        ADLS_STORAGE_ACCOUNT: "${var.storage_account}"
-        TAXI_TYPE:             "${var.taxi_type}"
+        # ────────────────────────────────────────────────────────────────
+        - task_key: delta_vacuum
+          description: Vacuum all Delta tables (7-day retention)
+          depends_on:
+            - task_key: dbt_test
+          spark_python_task:
+            python_file: ../spark/utils/vacuum_all.py
+          environment_key: nyc_taxi_env

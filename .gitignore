@@ -11,6 +11,13 @@ venv/
 # Secrets
 .env
 !.env.example
+.env.databricks
+!.env.databricks.example
+
+# Databricks CLI local state (never commit - even though OAuth U2M keeps the
+# actual token out of the repo entirely, in ~/.databrickscfg, not here)
+.databricks/
+databricks/.databricks/
 
 # Data
 /tmp/nyc_taxi_raw/

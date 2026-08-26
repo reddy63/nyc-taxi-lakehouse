@@ -42,5 +42,8 @@ def get_spark(
         # Fallback: create a minimal session (useful for local unit-test runs
         # that import from the databricks/ subtree directly).
         spark = SparkSession.builder.appName(app_name).getOrCreate()
-    spark.sparkContext.setLogLevel("WARN")
+    try:
+        spark.sparkContext.setLogLevel("WARN")
+    except Exception:
+        pass
     return spark

@@ -21,12 +21,18 @@ from datetime import datetime, timezone
 from pyspark.sql import DataFrame, functions as F
 from pyspark.sql.window import Window
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
+import inspect
+try:
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _script_dir = os.path.dirname(os.path.abspath(inspect.getsourcefile(lambda:0)))
+
+sys.path.insert(0, os.path.abspath(os.path.join(_script_dir, "../..")))
 from spark.utils.spark_session import get_spark
 from spark.utils.delta_utils import upsert_delta, optimize_delta
 
 # ── ADLS Gen2 path builder ──────────────────────────────────────────────────
-STORAGE_ACCOUNT  = os.getenv("ADLS_STORAGE_ACCOUNT", "nyctaxilakehouse")
+STORAGE_ACCOUNT  = os.getenv("ADLS_STORAGE_ACCOUNT", "nyctaxilakehouse1")
 BRONZE_CONTAINER = os.getenv("BRONZE_CONTAINER", "bronze")
 SILVER_CONTAINER = os.getenv("SILVER_CONTAINER", "silver")
 TAXI_TYPE        = os.getenv("TAXI_TYPE", "yellow")

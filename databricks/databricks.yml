@@ -31,6 +31,9 @@ variables:
   months:
     description: Comma-separated months to process
     default: "01"
+  sql_warehouse_id:
+    description: Databricks SQL Warehouse ID for dbt
+    default: "1e0ff4a757a196c0"
 
 targets:
 
@@ -47,7 +50,5 @@ targets:
     variables:
       months: "01,02,03"
 
-resources:
-  jobs:
-    nyc_taxi_medallion_pipeline:
-      $ref: resources/nyc_taxi_pipeline.yml
+include:
+  - resources/*.yml

@@ -7,9 +7,15 @@
 #   dev:  databricks SQL Warehouse (same endpoint as prod, cheaper serverless WH)
 #   prod: databricks SQL Warehouse (dedicated)
 #
-# Fill in the three UPPERCASE placeholders after running:
-#   databricks configure  (sets DATABRICKS_HOST + DATABRICKS_TOKEN)
-# Then set DATABRICKS_HTTP_PATH from:
+# Auth: OAuth U2M, not a PAT. Run scripts/configure_auth.sh once (it wraps
+#   databricks auth login --host <workspace> --profile DEFAULT
+# which opens a browser and stores the OAuth/refresh token in ~/.databrickscfg).
+# auth_type: databricks_cli below tells dbt-databricks to reuse that cached
+# session instead of expecting a token/client secret in this file or in
+# DATABRICKS_TOKEN. (Falls back to `auth_type: oauth` - which opens its own
+# browser prompt each dbt session instead of reusing the CLI's - if your
+# installed dbt-databricks version predates databricks_cli passthrough.)
+# Still set DATABRICKS_HTTP_PATH from:
 #   Databricks UI -> SQL Warehouses -> your_warehouse -> Connection Details
 
 nyc_taxi_lakehouse:
@@ -20,7 +26,7 @@ nyc_taxi_lakehouse:
       type: databricks
       host:              "{{ env_var('DATABRICKS_HOST') }}"
       http_path:         "{{ env_var('DATABRICKS_HTTP_PATH') }}"
-      token:             "{{ env_var('DATABRICKS_TOKEN') }}"
+      auth_type:         databricks_cli
       # Unity Catalog identifiers
       catalog:           "{{ env_var('UC_CATALOG', 'nyc_taxi') }}"
       schema:            dbt_dev
@@ -32,7 +38,7 @@ nyc_taxi_lakehouse:
       type: databricks
       host:              "{{ env_var('DATABRICKS_HOST') }}"
       http_path:         "{{ env_var('DATABRICKS_HTTP_PATH_PROD', env_var('DATABRICKS_HTTP_PATH')) }}"
-      token:             "{{ env_var('DATABRICKS_TOKEN') }}"
+      auth_type:         databricks_cli
       catalog:           "{{ env_var('UC_CATALOG', 'nyc_taxi') }}"
       schema:            marts
       threads:           8
