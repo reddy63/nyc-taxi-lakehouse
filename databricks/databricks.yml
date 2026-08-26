@@ -1,0 +1,53 @@
+# databricks/databricks.yml
+#
+# Databricks Asset Bundle (DAB) root configuration.
+# Replaces Apache Airflow for orchestrating the Medallion pipeline.
+#
+# Workspace: adb-nyc-taxi  (Central India)
+# URL:       https://adb-7405606284470994.14.azuredatabricks.net
+#
+# CLI commands:
+#   databricks bundle validate          # lint this file
+#   databricks bundle deploy -t dev     # upload code + create job
+#   databricks bundle run   -t dev nyc_taxi_medallion_pipeline
+#   databricks bundle destroy -t dev    # tear down
+
+bundle:
+  name: nyc-taxi-lakehouse
+
+variables:
+  storage_account:
+    description: Azure Data Lake Storage Gen2 account name
+    default: nyctaxilakehouse
+  uc_catalog:
+    description: Unity Catalog catalog name
+    default: nyc_taxi
+  taxi_type:
+    description: TLC taxi type (yellow | green | fhv)
+    default: yellow
+  year:
+    description: Data year to process
+    default: "2024"
+  months:
+    description: Comma-separated months to process
+    default: "01"
+
+targets:
+
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-7405606284470994.14.azuredatabricks.net
+
+  prod:
+    mode: production
+    workspace:
+      host: https://adb-7405606284470994.14.azuredatabricks.net
+    variables:
+      months: "01,02,03"
+
+resources:
+  jobs:
+    nyc_taxi_medallion_pipeline:
+      $ref: resources/nyc_taxi_pipeline.yml

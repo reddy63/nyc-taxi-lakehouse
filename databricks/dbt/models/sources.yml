@@ -1,0 +1,40 @@
+# databricks/dbt/models/sources.yml
+# Declares the Unity Catalog Gold tables as dbt sources.
+# The catalog + schema must match what aggregate_gold.py registers.
+
+version: 2
+
+sources:
+  - name: nyc_taxi_gold
+    description: Gold Delta tables registered in Unity Catalog by the PySpark pipeline.
+    catalog: nyc_taxi          # UC catalog  (env: UC_CATALOG)
+    schema:  gold              # UC schema   (env: UC_GOLD_SCHEMA)
+    tables:
+      - name: daily_revenue
+        description: Per-day revenue KPIs written by aggregate_gold.py.
+        columns:
+          - name: trip_date
+            tests: [not_null, unique]
+          - name: total_revenue
+            tests: [not_null]
+
+      - name: hourly_demand
+        description: Trip volume by day x hour written by aggregate_gold.py.
+        columns:
+          - name: hour_of_day
+            tests:
+              - not_null
+              - accepted_values:
+                  values: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23]
+
+      - name: location_stats
+        description: Pickup/dropoff counts and revenue by TLC zone.
+        columns:
+          - name: location_id
+            tests: [not_null]
+
+      - name: payment_breakdown
+        description: Revenue split by payment method.
+        columns:
+          - name: payment_type
+            tests: [not_null, unique]

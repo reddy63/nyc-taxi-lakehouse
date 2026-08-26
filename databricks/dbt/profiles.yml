@@ -1,0 +1,40 @@
+# databricks/dbt/profiles.yml
+#
+# dbt-databricks profile targeting the Azure Databricks SQL Warehouse.
+#
+# CHANGE vs local profiles.yml:
+#   dev:  duckdb + delta_scan()   REMOVED
+#   dev:  databricks SQL Warehouse (same endpoint as prod, cheaper serverless WH)
+#   prod: databricks SQL Warehouse (dedicated)
+#
+# Fill in the three UPPERCASE placeholders after running:
+#   databricks configure  (sets DATABRICKS_HOST + DATABRICKS_TOKEN)
+# Then set DATABRICKS_HTTP_PATH from:
+#   Databricks UI -> SQL Warehouses -> your_warehouse -> Connection Details
+
+nyc_taxi_lakehouse:
+  target: dev
+  outputs:
+
+    dev:
+      type: databricks
+      host:              "{{ env_var('DATABRICKS_HOST') }}"
+      http_path:         "{{ env_var('DATABRICKS_HTTP_PATH') }}"
+      token:             "{{ env_var('DATABRICKS_TOKEN') }}"
+      # Unity Catalog identifiers
+      catalog:           "{{ env_var('UC_CATALOG', 'nyc_taxi') }}"
+      schema:            dbt_dev
+      threads:           4
+      connect_timeout:   60
+      connect_retries:   3
+
+    prod:
+      type: databricks
+      host:              "{{ env_var('DATABRICKS_HOST') }}"
+      http_path:         "{{ env_var('DATABRICKS_HTTP_PATH_PROD', env_var('DATABRICKS_HTTP_PATH')) }}"
+      token:             "{{ env_var('DATABRICKS_TOKEN') }}"
+      catalog:           "{{ env_var('UC_CATALOG', 'nyc_taxi') }}"
+      schema:            marts
+      threads:           8
+      connect_timeout:   60
+      connect_retries:   3
