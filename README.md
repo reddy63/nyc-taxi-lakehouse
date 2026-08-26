@@ -122,3 +122,41 @@ databricks bundle run nyc_taxi_medallion_pipeline
 4. **`dbt_run`**: Connects to the Databricks SQL Warehouse to run SQL transformations that convert Gold tables into complex reporting facts (Marts).
 5. **`dbt_test`**: Asserts data quality (e.g. no negative revenues, unique primary keys).
 6. **`delta_vacuum`**: Runs garbage collection on all Delta tables, deleting physical files older than 7 days to save Azure storage costs.
+
+---
+
+## Data Lineage & Table Previews
+
+Here is what the actual rows of data look like as they move through the pipeline stages:
+
+### 1. 🥉 Bronze (`nyc_taxi.bronze.yellow_trips`)
+*Raw data with ingestion tracking metadata appended.*
+
+| VendorID | tpep_pickup_datetime | passenger_count | fare_amount | _ingested_at | _source_file | _taxi_type |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2 | 2024-01-01 00:05:31 | 1.0 | 11.40 | 2024-10-25T17:01:00Z | yellow_tripdata_2024-01.parquet | yellow |
+| 1 | 2024-01-01 00:10:45 | 0.0 | -5.00 | 2024-10-25T17:01:00Z | yellow_tripdata_2024-01.parquet | yellow |
+
+### 2. 🥈 Silver (`nyc_taxi.silver.yellow_trips`)
+*Cleaned data. Bad rows (0 passengers, negative fare) and exact duplicates are dropped. Timestamps are cast to native formats.*
+
+| VendorID | tpep_pickup_datetime | passenger_count | trip_distance | fare_amount | payment_type | PULocationID | DOLocationID |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2 | 2024-01-01 00:05:31 | 1 | 2.50 | 11.40 | 1 | 236 | 237 |
+| 2 | 2024-01-01 00:15:22 | 2 | 4.10 | 18.50 | 2 | 161 | 142 |
+
+### 3. 🥇 Gold (`nyc_taxi.gold.daily_revenue`)
+*PySpark aggregations grouping millions of rows into a single row per day.*
+
+| trip_date | total_trips | total_fare | total_tips | total_revenue | avg_fare | avg_distance_miles |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 2024-01-01 | 85,102 | 1,452,100.50 | 120,500.00 | 1,572,600.50 | 17.06 | 3.12 |
+| 2024-01-02 | 92,305 | 1,650,220.00 | 150,110.25 | 1,800,330.25 | 17.87 | 3.40 |
+
+### 4. 💎 dbt Marts (`nyc_taxi.marts.fct_monthly_revenue`)
+*Final analytics tables created by dbt using window functions (e.g., Month-over-Month Growth).*
+
+| revenue_month | total_trips | total_monthly_revenue | mom_revenue_growth_pct | avg_daily_revenue |
+| :--- | :--- | :--- | :--- | :--- |
+| 2024-01-01 | 2,850,000 | 45,600,100.00 | NULL | 1,470,970.96 |
+| 2024-02-01 | 2,910,000 | 48,100,500.00 | + 5.48 % | 1,658,637.93 |
